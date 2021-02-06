@@ -1,8 +1,10 @@
 package sandbox 
 
 import parser._
+import effects._
 import parser.BasicParsers._
 import lambda._
+import lambda.LcExpr._
 import helpers._
 
 import scala.util.chaining.scalaUtilChainingOps
@@ -10,38 +12,81 @@ import scala.util.chaining.scalaUtilChainingOps
 object tryOuts {
 
   @main def tryOperators  =   {
-    def runAndPrint[A](p: Parser[A]) = p.runParser("charles") tap println
+    def runAndPrint[A](p: Parser[A]) = p.parse("charles") tap println
 
-    val mapper = (b: Int) => (a: Char) => b.toHexString.head
-    val flatMapper = (b: Int) => (a: Char) => Parser.pure(b.toHexString.head)
+    def mapper(b: Int)(a: Char) = b.toHexString.head
+    def flatMapper(b: Int)(a: Char)(using parserAp: Applicative[Parser]) = parserAp.pure(b.toHexString.head)
 
     val subject = charP('c')
 
     subject.map(c => c.toUpper) tap runAndPrint
 
-    (subject >> mapper(1)) tap runAndPrint    
+    (subject map mapper(1)) tap runAndPrint    
     (subject >>= flatMapper(1)) tap runAndPrint
+
+    val parserAp: Monad[Parser] = summon[Monad[Parser]]
+
+    val f: String => Option[Int] = _.toIntOption
+    val input = "42"
+    val inputParser = stringP(input)
+
+    def parse42asIntOption_manual: Parser[Option[Int]] = Parser { input =>
+      inputParser.parse(input) match {
+        case Some((s, value)) => Some((s, f(value)))
+        case None => None
+      }
+    }
+
+    val liftedF = parserAp.lift(f)
+    val parse42asIntOption_lifted = liftedF(inputParser)
+
+    val pureF = parserAp.pure(f)
+    val parse42asIntOption_pure = (inputParser <*> pureF)
+
+    parse42asIntOption_manual.parse(input) tap println
+    parse42asIntOption_lifted.parse(input) tap println
+    parse42asIntOption_pure.parse(input) tap println
+
+    { charP('c') :*> charP('h') }.parse("charles") tap println
+    { charP('c') <*: charP('h') }.parse("charles") tap println
+
+
+
+
+    val pVars = charP('λ') :*> many(varP)
+    val pDotExpr = charP('.') :*> exprP
+    val pFunc = pVars * pDotExpr
+    val pFunc2 = (charP('λ') :*> many(varP)) * (charP('.') :*> exprP)
+
+    pVars.parse("abc") tap (r => println(s"$r should be None"))
+    pVars.parse("λabc.xyz") tap (r => println(s"$r => ${ r == Some((".xyz",List(LcVar("a"), LcVar("b"), LcVar("c")))) }"))
+    pDotExpr.parse("λabc.xyz") tap (r => println(s"$r should be None"))
+    pDotExpr.parse(".xyz") tap (r => println(s"$r => ${ r == Some(("",LcApp(LcApp(LcVar("x"), LcVar("y")), LcVar("z")))) }"))
+    pFunc.parse("λabc.xyz") tap (r => println(s"$r => ${ r == Some(("",LcApp(LcApp(LcVar("x"), LcVar("y")), LcVar("z")))) }"))
+    pFunc2.parse("λabc.xyz") tap (r => println(s"$r => ${ r == Some(("",LcApp(LcApp(LcVar("x"), LcVar("y")), LcVar("z")))) }"))
+
+    pFunc2
+      .map{ (l,r) => l.foldRight(r)(LcFunc(_, _)) }
+      .parse("λabc.xyz") tap (r => println(s"$r => ${ r == Some(("", LcFunc(LcVar("a"), LcFunc(LcVar("b"), LcFunc(LcVar("c"), LcApp(LcApp(LcVar("x"), LcVar("y")), LcVar("z"))))))) }"))
   }
 
-
-  /////////////////////////////////
-  // Execute the provided parser and print results to console
-  def parseAndPrint[T](p: Parser[T])(label: String): ParserFunc[T] = s => p.runParser(s) tap {
+  def parseAndPrint[T](p: Parser[T])(label: String): ParserFunc[T] = (s: String) => p.parse(s) tap {
     case Some((r, tree)) => println(s"[$r] $label: $s => $tree")
     case None => println("Parsing failed")
   }
   val parseExpr = parseAndPrint(exprP)
 
-  import LcExpr._
   def parens(s: String): String = s"($s)"
 
+  /** Walk the tree and assign a number to every unique variable binding. Unbound variables get a # symbol instead. 
+   *  Returns a new expression, same as the input but with each variable decorated. */
   def resolveBindings(expr: LcExpr, env: Map[String, Int]): LcExpr = expr match {
     case LcVar(name) => LcVar(name + env.getOrElse(name, "#"))
     case LcFunc(lcVar @ LcVar(name), body: LcExpr) =>
       val env2 = env + (name -> (env.getOrElse(name, 0) + 1))
       val v = resolveBindings(lcVar, env2) match {
         case x: LcVar => x
-        case _ => throw new Exception("shouldn't happen")
+        case _ => throw Exception("shouldn't happen")
       }
       val b = resolveBindings(body, env2)
       LcFunc(v, b)
@@ -51,6 +96,8 @@ object tryOuts {
       LcApp(l,r)
   }
 
+  /** Walk the tree and build a string representation of it. This will output syntactic sugar for curried functions
+   * and apply parens appropriately! */
   def walk(expr: LcExpr): String = expr match {
     case LcVar(name) => name
 
@@ -84,6 +131,7 @@ object tryOuts {
       }
       walkLeft(left) + walkRight(right)
   }
+  
   @main def tryParser = {
 
     parseExpr("simplest expr")("x")
@@ -127,6 +175,7 @@ object tryOuts {
     parseExpr("param test 1 - expected 'λx.(λy.x)y'")("λx.(λy.x)y")
       .map { case (_, t) => resolveBindings(t, Map()).pipe(walk).tap(println) }
   }
+  
   @main def runValidate = {
     def validate(s: String)(expected: String): Unit = parseExpr(s)(s).map{ x => x match { case (_, t) => walk(t) } }.map(s2 => println(s"$s == $s2 => ${s2==expected}"))
     validate("λx.x")("λx.x")
@@ -135,6 +184,6 @@ object tryOuts {
     validate("(λx.(λy.xy))y")("(λxy.xy)y")
     validate("(λx.(λy.(x(λx.xy))))y")("(λxy.x(λx.xy))y")
     println("done.")
-    
+
   }
 }

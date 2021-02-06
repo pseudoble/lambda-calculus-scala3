@@ -20,25 +20,23 @@ enum LcExpr:
 
 import LcExpr._
 
-
 /** Parses a single letter variable. */
 def varP: Parser[LcVar] = Parser {
-  case y scons ys if y.isLetter => Some((ys, LcVar(y.toString)))
+  case h scons t if h.isLetter => Some((t, LcVar(h.toString)))
   case nomatch => None
 }
 
 /** Parses an expression between parens. */
-def parensP: Parser[LcExpr] = charP('(') *> exprP <* charP(')')
+def parensP: Parser[LcExpr] = charP('(') :*> exprP <*: charP(')')
 
 /** Parses an Appliation expression. */
 def appP: Parser[LcExpr] = 
-  Parser.many(parensP <|> funcP <|> varP) >> (_.reduceLeft(LcApp(_,_)))
-  
+  many(parensP <|> funcP <|> varP) map (_.reduceLeft(LcApp(_,_)))
+
 /** Parses a function expression */
-def funcP: Parser[LcExpr] = for {
-  vs <- charP('λ') *> Parser.many(varP)
-  e <- charP('.') *> exprP
-} yield vs.foldRight(e)(LcFunc(_, _))
+def funcP: Parser[LcExpr] =
+  ((charP('λ') :*> many(varP)) * (charP('.') :*> exprP))
+    .map((vars,body) => vars.foldRight(body)(LcFunc(_, _)))
 
 /** Parses anything */
 def exprP: Parser[LcExpr] = appP <|> parensP <|> funcP <|> varP
