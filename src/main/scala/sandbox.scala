@@ -124,19 +124,27 @@ object tryOuts {
     println("---------------------------------------")
     
     
-    def parseAndReduce(label: String)(expr: String): Option[LcExpr] = {
-      val parsed = exprP.parse(expr).map{ case (_, t) => fingerprint(t) }
-      val reduced = parsed.map(betaReduce)
-      reduced
-    }
-    parseAndReduce("beta reduce 1")("(λx.x)y") tap { _.map(asStr).tap(println) }
-    parseAndReduce("beta reduce 2")("(λx.xxx)(λy.y)") tap { _.map(asStr).tap(println) }
-    parseAndReduce("beta reduce 3")("(λxy.xy)(λy.y)") tap { _.map(asStr).tap(println) }
-    parseAndReduce("beta reduce 4")("(λxyz.xyz)(λxy.xy)(λx.x)x") tap { _.map(asStr).tap(println) }
-    parseAndReduce("beta reduce 5")("(λxyz.xyz)(λyx.xzy)(λx.x)x") tap { _.map(asStr).tap(println) }
-    parseAndReduce("beta reduce 6")("xz(λx.x)") tap { _.map(asStr).tap(println) }
-    parseAndReduce("beta reduce 7")("λx.yx") tap { _.map(asStr).tap(println) }
-    parseAndReduce("beta reduce 8")("(λx.(λy.x)y)z") tap { _.map(asStr).tap(println) }
+    def parseAndReduce(label: String)(input: String)(expected: String): Option[LcExpr] = for {
+      (_, parsed) <- exprP.parse(input)
+//      _ = printPretty(parsed)
+      fingerprinted = fingerprint(parsed)
+      betaReduced = betaReduce(fingerprinted)
+//      _ = printPretty(betaReduced)
+      etaReduced = etaConvertReduce(betaReduced)
+//      _ = printPretty(etaReduced)
+      success = asStr(etaReduced) == expected
+      _ = println(s"[$success] $input -> ${asStr(parsed)} >> ${asStr(betaReduced)} >> ${asStr(etaReduced)} == $expected")
+//      _ = println("-------")
+    } yield etaReduced
+    
+    parseAndReduce("beta reduce 1")("(λx.x)y")("y")
+    parseAndReduce("beta reduce 2")("(λx.xxx)(λy.y)")("λy.y")
+    parseAndReduce("beta reduce 3")("(λxy.xy)(λy.y)")("λy.y")
+    parseAndReduce("beta reduce 4")("(λxyz.xyz)(λxy.xy)(λx.x)x")("x")
+    parseAndReduce("beta reduce 5")("(λxyz.xyz)(λyx.xzy)(λx.x)x")("xz(λx.x)")
+    parseAndReduce("beta reduce 6")("xz(λx.x)")("xz(λx.x)")
+    parseAndReduce("beta reduce 7")("λx.yx")("y")
+    parseAndReduce("beta reduce 8")("(λx.(λy.x)y)z")("z")
     
   }
   

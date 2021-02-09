@@ -94,20 +94,36 @@ def replace(v: LcVar, valueFac: () => LcExpr)(target: LcExpr): LcExpr = {
   }
 }
 
-def betaReduce(expr: LcExpr): LcExpr = {
-  (expr match {
-    case LcApp(replaceIn, replaceWith) => {
-      val inReduced = betaReduce(replaceIn)
-      val withReduced = betaReduce(replaceWith)
-      inReduced match {
-        case LcFunc(param, body) =>
-          replace(param, () => fingerprint(withReduced))(body)
-          |> betaReduce
-        case in => LcApp(in, withReduced)
-      }
+def betaReduce(expr: LcExpr): LcExpr = expr match {
+  case LcApp(replaceIn, replaceWith) => {
+    val inReduced = betaReduce(replaceIn)
+    val withReduced = betaReduce(replaceWith)
+    inReduced match {
+      case LcFunc(param, body) =>
+        replace(param, () => fingerprint(withReduced))(body)
+        |> betaReduce
+      case in => LcApp(in, withReduced)
     }
-    case o => o
-  })
+  }
+  case o => o
+}
+
+def referenced(param: LcVar)(expr: LcExpr): Boolean = expr match {
+  case `param` => true
+  case LcFunc(_, body) => referenced(param)(body)
+  case LcApp(left, right) => referenced(param)(left) || referenced(param)(right)
+  case _ => false
+}
+def etaConvertReduce(expr: LcExpr): LcExpr = expr match {
+  case func@LcFunc(param, body) => 
+    etaConvertReduce(body) match {
+      case LcApp(left, `param`) =>
+        if referenced(param)(left) 
+        then func // func cannot be simplified
+        else left // func can be simplified to just left
+      case _ => func  // func cannot be simplified
+    }
+  case o => o // o cannot be simplified
 }
 
 
@@ -132,15 +148,16 @@ def asStr(expr: LcExpr): String = {
         case _ => s"λ$v.$b"
       }
 
-    case LcApp(left, right) =>
-      def w(e: LcExpr): String = {
-        val str = asStr(e)
-        e match {
-          case _: (LcApp|LcFunc) => parens(str)
-          case _ => str
-        }
+    case LcApp(left, right) =>     
+      val l = left match {
+        case e: LcFunc => parens(asStr(e))
+        case e => asStr(e)
       }
-      w(left) + w(right)
+      val r = right match {
+        case e: (LcApp | LcFunc) => parens(asStr(e))
+        case e => asStr(e)
+      }
+      l + r
   }
 }
 
