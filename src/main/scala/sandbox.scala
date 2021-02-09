@@ -50,9 +50,6 @@ object tryOuts {
     { charP('c') :*> charP('h') }.parse("charles") tap println
     { charP('c') <*: charP('h') }.parse("charles") tap println
 
-
-
-
     val pVars = charP('λ') :*> many(varP)
     val pDotExpr = charP('.') :*> exprP
     val pFunc = pVars * pDotExpr
@@ -76,62 +73,7 @@ object tryOuts {
   }
   val parseExpr = parseAndPrint(exprP)
 
-  def parens(s: String): String = s"($s)"
 
-  /** Walk the tree and assign a number to every unique variable binding. Unbound variables get a # symbol instead. 
-   *  Returns a new expression, same as the input but with each variable decorated. */
-  def resolveBindings(expr: LcExpr, env: Map[String, Int]): LcExpr = expr match {
-    case LcVar(name) => LcVar(name + env.getOrElse(name, "#"))
-    case LcFunc(lcVar @ LcVar(name), body: LcExpr) =>
-      val env2 = env + (name -> (env.getOrElse(name, 0) + 1))
-      val v = resolveBindings(lcVar, env2) match {
-        case x: LcVar => x
-        case _ => throw Exception("shouldn't happen")
-      }
-      val b = resolveBindings(body, env2)
-      LcFunc(v, b)
-    case LcApp(left, right) =>
-      val l = resolveBindings(left, env)
-      val r = resolveBindings(right, env)
-      LcApp(l,r)
-  }
-
-  /** Walk the tree and build a string representation of it. This will output syntactic sugar for curried functions
-   * and apply parens appropriately! */
-  def walk(expr: LcExpr): String = expr match {
-    case LcVar(name) => name
-
-    case LcFunc(lcVar @ LcVar(name), body: LcExpr) =>
-      val v = walk(lcVar)
-      val b = walk(body)
-      body match {
-        case _: LcFunc =>
-          val b2 = b.slice(1, b.length)
-          s"λ$v$b2"
-        case _ => s"λ$v.$b"
-      }
-
-    case LcApp(left, right) =>
-      val lstr = walk(left)
-      val rstr = walk(right)
-
-      def walkLeft(e: LcExpr): String = {
-        val str = walk(e)
-        e match {
-          case _: LcFunc => parens(str)
-          case _ => str
-        }
-      }
-      def walkRight(e: LcExpr): String = {
-        val str = walk(e)
-        e match {
-          case _: (LcApp|LcFunc) => parens(str)
-          case _ => str
-        }
-      }
-      walkLeft(left) + walkRight(right)
-  }
-  
   @main def tryParser = {
 
     parseExpr("simplest expr")("x")
@@ -146,44 +88,66 @@ object tryOuts {
     parseExpr("short curried, app in body")("λxy.xy")
     parseExpr("same as previous, with explicit parens changing order of operations")("(λxy.x)y")
 
+
+    def thing(r: ParserResult[LcExpr]): LcExpr = r match { case (_, t) => fingerprint(t).tap(asStr(_).tap(println)) }
     val fancyParse = parseExpr("book page 3 bottom")("(λx.(λx.λy.xyz))y")
-    fancyParse.map { case (_, t) => resolveBindings(t, Map()).pipe(walk).tap(println) }
+    fancyParse.map(thing)
 
     val fancyParse2 = parseExpr("book page 3 bottom different")("(λx.(λx.λy.x(yz)))y")
-    fancyParse2.map { case (_, t) => resolveBindings(t, Map()).pipe(walk).tap(println) }
+    fancyParse2.map(thing)
 
     val fancyParse3 = parseExpr("book page 3 bottom different")("(λx.(λx.λy.xyz(λz.z)x))y")
-    fancyParse3.map { case (_, t) => resolveBindings(t, Map()).pipe(walk).tap(println) }
+    fancyParse3.map(thing)
 
 
     parseExpr("paren test 1 - expected 'abc'")("abc")
-      .map { case (_, t) => resolveBindings(t, Map()).pipe(walk).tap(println) }
+      .map(thing)
     parseExpr("paren test 1.a - expected 'abc'")("(ab)c")
-      .map { case (_, t) => resolveBindings(t, Map()).pipe(walk).tap(println) }
+      .map(thing)
     parseExpr("paren test 2 - expected 'a(bc)'")("a(bc)")
-      .map { case (_, t) => resolveBindings(t, Map()).pipe(walk).tap(println) }
+      .map(thing)
     parseExpr("paren test 3 - expected '(λx.x)y'")("(λx.x)y")
-      .map { case (_, t) => resolveBindings(t, Map()).pipe(walk).tap(println) }
+      .map(thing)
     parseExpr("paren test 4 - expected '(λx.x)(yz)'")("(λx.x)(yz)")
-      .map { case (_, t) => resolveBindings(t, Map()).pipe(walk).tap(println) }
+      .map(thing)
     parseExpr("paren test 5 - expected '(λx.x)λx.x'")("(λx.x)(λx.x)")
-      .map { case (_, t) => resolveBindings(t, Map()).pipe(walk).tap(println) }
+      .map(thing)
     parseExpr("paren test 6 - expected '(λx.x)λx.x'")("λx.x(λx.x)")
-      .map { case (_, t) => resolveBindings(t, Map()).pipe(walk).tap(println) }
+      .map(thing)
     parseExpr("param test 1 - expected 'λxy.xy'")("λx.λy.xy")
-      .map { case (_, t) => resolveBindings(t, Map()).pipe(walk).tap(println) }
+      .map(thing)
     parseExpr("param test 1 - expected 'λx.(λy.x)y'")("λx.(λy.x)y")
-      .map { case (_, t) => resolveBindings(t, Map()).pipe(walk).tap(println) }
+      .map(thing)
+    parseExpr("param test 1 - expected '(λx.xx)(λx.x)'")("(λx.xx)(λx.x)")
+      .map(thing)
+
+    println("---------------------------------------")
+    
+    
+    def parseAndReduce(label: String)(expr: String): Option[LcExpr] = {
+      val parsed = exprP.parse(expr).map{ case (_, t) => fingerprint(t) }
+      val reduced = parsed.map(betaReduce)
+      reduced
+    }
+    parseAndReduce("beta reduce 1")("(λx.x)y") tap { _.map(asStr).tap(println) }
+    parseAndReduce("beta reduce 2")("(λx.xxx)(λy.y)") tap { _.map(asStr).tap(println) }
+    parseAndReduce("beta reduce 3")("(λxy.xy)(λy.y)") tap { _.map(asStr).tap(println) }
+    parseAndReduce("beta reduce 4")("(λxyz.xyz)(λxy.xy)(λx.x)x") tap { _.map(asStr).tap(println) }
+    parseAndReduce("beta reduce 5")("(λxyz.xyz)(λyx.xzy)(λx.x)x") tap { _.map(asStr).tap(println) }
+    parseAndReduce("beta reduce 6")("xz(λx.x)") tap { _.map(asStr).tap(println) }
+    parseAndReduce("beta reduce 7")("λx.yx") tap { _.map(asStr).tap(println) }
+    parseAndReduce("beta reduce 8")("(λx.(λy.x)y)z") tap { _.map(asStr).tap(println) }
+    
   }
   
   @main def runValidate = {
-    def validate(s: String)(expected: String): Unit = parseExpr(s)(s).map{ x => x match { case (_, t) => walk(t) } }.map(s2 => println(s"$s == $s2 => ${s2==expected}"))
+    def validate(s: String)(expected: String): Unit = parseExpr(s)(s).map{ x => x match { case (_, t) => asStr(t) } }.map(s2 => println(s"$s == $s2 => ${s2==expected}"))
     validate("λx.x")("λx.x")
     validate("(λx.x)y")("(λx.x)y")
     validate("(λx.xy)")("λx.xy")
     validate("(λx.(λy.xy))y")("(λxy.xy)y")
     validate("(λx.(λy.(x(λx.xy))))y")("(λxy.x(λx.xy))y")
+    validate("(λx.xx)(λx.x)")("(λx.xx)(λx.x)")
     println("done.")
-
   }
 }
