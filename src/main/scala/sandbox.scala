@@ -89,7 +89,7 @@ object tryOuts {
     parseExpr("same as previous, with explicit parens changing order of operations")("(λxy.x)y")
 
 
-    def thing(r: ParserResult[LcExpr]): LcExpr = r match { case (_, t) => fingerprint(t).tap(asStr(_).tap(println)) }
+    def thing(r: ParserResult[LcExpr]): LcExpr = r match { case (_, t) => fingerprint(t).tap(asStr(false)(_).tap(println)) }
     val fancyParse = parseExpr("book page 3 bottom")("(λx.(λx.λy.xyz))y")
     fancyParse.map(thing)
 
@@ -132,8 +132,8 @@ object tryOuts {
 //      _ = printPretty(betaReduced)
       etaReduced = etaConvertReduce(betaReduced)
 //      _ = printPretty(etaReduced)
-      success = asStr(etaReduced) == expected
-      _ = println(s"[$success] $input -> ${asStr(parsed)} >> ${asStr(betaReduced)} >> ${asStr(etaReduced)} == $expected")
+      success = asStr(false)(etaReduced) == expected
+      _ = println(s"[$success] $input -> ${asStr(false)(parsed)} >> ${asStr(false)(betaReduced)} >> ${asStr(false)(etaReduced)} == $expected")
 //      _ = println("-------")
     } yield etaReduced
     
@@ -149,7 +149,7 @@ object tryOuts {
   }
   
   @main def runValidate = {
-    def validate(s: String)(expected: String): Unit = parseExpr(s)(s).map{ x => x match { case (_, t) => asStr(t) } }.map(s2 => println(s"$s == $s2 => ${s2==expected}"))
+    def validate(s: String)(expected: String): Unit = parseExpr(s)(s).map{ x => x match { case (_, t) => asStr(false)(t) } }.map(s2 => println(s"$s == $s2 => ${s2==expected}"))
     validate("λx.x")("λx.x")
     validate("(λx.x)y")("(λx.x)y")
     validate("(λx.xy)")("λx.xy")
@@ -157,5 +157,62 @@ object tryOuts {
     validate("(λx.(λy.(x(λx.xy))))y")("(λxy.x(λx.xy))y")
     validate("(λx.xx)(λx.x)")("(λx.xx)(λx.x)")
     println("done.")
+  }
+  
+  @main def numbers = {
+    object λ:
+      
+      def parse: String => Option[ParserResult[LcExpr]] = exprP.parse
+      
+      def run: LcExpr => LcExpr = expr => {
+        val fp = fingerprint(expr)
+        val beta = betaReduce(fp)
+        val eta = etaConvertReduce(beta)
+        eta
+      }
+
+      def parseRun: String => Option[String] = expr => for {
+        (_, t) <- parse(expr)
+        result = run(t)
+      } yield asStr(false)(result)
+
+      def lcVar(v: Char): LcVar = LcVar(v.toString)
+      def func(v: Char, expr: LcExpr => LcExpr): LcExpr = lcVar(v) pipe (p => LcFunc(p, expr(p)))
+      def ident(v: Char): LcExpr = func(v, identity)
+      def zero = func('s', s => ident('z'))
+      def succ = func('w', w => func('y', y => func('x', x => y app (w app y app x))))
+      def mul = func('x', x => func('y', y => func('z', z => x app (y app z))))
+      
+      def num(v: Int): LcExpr = v match {
+        case 1 => succ app zero
+        case n => succ app num(n-1)
+      }
+    
+      extension (left: LcExpr)
+        infix def app (right: LcExpr): LcExpr =
+          LcApp(left, right)
+        def +(right: LcExpr): LcExpr = left app succ app right
+        def *(right: LcExpr): LcExpr = mul app left app right
+          
+    end λ
+    import λ._
+
+    (num(2) + num(3)) pipe run tap (n => println(s"2 + 3 = ${asStr(false)(n)}"))
+    (num(2) * num(3)) pipe run tap (n => println(s"2 * 3 = ${asStr(false)(n)}"))
+//    
+//    def thing = for {
+//      _ = println(s"s = ${asStr(false)(succ)}")
+//      _ = println(s"s = ${asStr(false)(mul)}")
+//      _ = println(s"0 = ${asStr(false)(zero)}")
+//      one = succ app zero pipe run tap (n => println(s"1 = ${asStr(false)(n)}"))
+//      two = succ app one pipe run tap (n => println(s"2 = ${asStr(false)(n)}"))
+//      three = succ app two pipe run tap (n => println(s"3 = ${asStr(false)(n)}"))
+//      four = succ app three pipe run tap (n => println(s"4 = ${asStr(false)(n)}"))
+//      five = succ app four pipe run tap (n => println(s"5 = ${asStr(false)(n)}"))
+//      ss3 = (succ app (succ app three)) pipe run tap (n => println(s"ss3 = ${asStr(false)(n)}"))
+//      twoPlusThree = (two app succ app three) pipe run tap (n => println(s"2s3 = ${asStr(false)(n)}"))
+//      twoTimesThree = (mul app two app three) pipe run tap (n => println(s"2x3 = ${asStr(false)(n)}"))
+//    } yield ()
+//    thing
   }
 }

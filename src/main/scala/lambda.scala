@@ -95,13 +95,15 @@ def replace(v: LcVar, valueFac: () => LcExpr)(target: LcExpr): LcExpr = {
 }
 
 def betaReduce(expr: LcExpr): LcExpr = expr match {
+  case f@LcFunc(param, body) =>
+    LcFunc(param, betaReduce(body))
   case LcApp(replaceIn, replaceWith) => {
     val inReduced = betaReduce(replaceIn)
     val withReduced = betaReduce(replaceWith)
     inReduced match {
-      case LcFunc(param, body) =>
-        replace(param, () => fingerprint(withReduced))(body)
-        |> betaReduce
+      case f@LcFunc(param, body) =>
+        val replaced = replace(param, () => withReduced)(body)
+        betaReduce(replaced)
       case in => LcApp(in, withReduced)
     }
   }
@@ -115,10 +117,10 @@ def referenced(param: LcVar)(expr: LcExpr): Boolean = expr match {
   case _ => false
 }
 def etaConvertReduce(expr: LcExpr): LcExpr = expr match {
-  case func@LcFunc(param, body) => 
+  case func@LcFunc(param, body) =>
     etaConvertReduce(body) match {
       case LcApp(left, `param`) =>
-        if referenced(param)(left) 
+        if referenced(param)(left)
         then func // func cannot be simplified
         else left // func can be simplified to just left
       case _ => func  // func cannot be simplified
@@ -129,18 +131,18 @@ def etaConvertReduce(expr: LcExpr): LcExpr = expr match {
 
 /** Walk the tree and build a string representation of it. This will output syntactic sugar for curried functions
  * and apply parens appropriately! */
-def asStr(expr: LcExpr): String = {
+def asStr(withFingerprints: Boolean)(expr: LcExpr): String = {
+  def _asStr = asStr(withFingerprints) _
   def parens(s: String): String = s"($s)"
   
   expr match {
-    case LcVar(name, _) => name
-    //  case LcVar(name, id) => id match {
-    //    case Some(i) => s"$name#$i"
-    //    case _ => name
-    //  }
+      case LcVar(name, id) => id match {
+        case Some(i) if withFingerprints => s"$name#$i"
+        case _ => name
+      }
     case LcFunc(lcVar, body) =>
-      val v = asStr(lcVar)
-      val b = asStr(body)
+      val v = _asStr(lcVar)
+      val b = _asStr(body)
       body match {
         case _: LcFunc =>
           val b2 = b.slice(1, b.length)
@@ -148,17 +150,17 @@ def asStr(expr: LcExpr): String = {
         case _ => s"λ$v.$b"
       }
 
-    case LcApp(left, right) =>     
+    case LcApp(left, right) =>
       val l = left match {
-        case e: LcFunc => parens(asStr(e))
-        case e => asStr(e)
+        case e: LcFunc => parens(_asStr(e))
+        case e => _asStr(e)
       }
       val r = right match {
-        case e: (LcApp | LcFunc) => parens(asStr(e))
-        case e => asStr(e)
+        case e: (LcApp | LcFunc) => parens(_asStr(e))
+        case e => _asStr(e)
       }
       l + r
   }
 }
 
-def printPretty = asStr andThen println
+def printPretty = asStr(false) andThen println
