@@ -1,4 +1,4 @@
-package helpers
+package io.pseudoble.tools
 
 // pattern matching a string like a list
 object scons {

@@ -1,8 +1,8 @@
-package effects
+package io.pseudoble.effects
 
 import scala.annotation.targetName
 import scala.util.chaining.scalaUtilChainingOps
-import helpers._
+import io.pseudoble.tools._
 
 /** Functor Type Class */
 trait Functor[F[_]]:
@@ -11,7 +11,7 @@ trait Functor[F[_]]:
   def lift[A, B](f: => A => B): F[A] => F[B] = a => map(a)(f)
 
   extension [A, B] (fa: F[A])
-    /** map - given a container with a vlue, apply a function to to the value and return a new container holding the 
+    /** map - given a container with a value, apply a function to to the value and return a new container holding the 
      *        result. */
     infix def map(f: => A => B): F[B]
     
@@ -102,7 +102,7 @@ class State[S, +A](private val f: S => (S, A)) {
 }
 object State:
   type StateInstance[S] = [a] =>> State[S, a]
-  given [S] as Monad[StateInstance[S]] with {
+  given [S]: Monad[StateInstance[S]] with {
     def pure[A](a: => A): State[S, A] = State { s => (s, a) }
     extension [A, B](fa: State[S, A])
       def flatMap(f: => A => State[S, B]): State[S, B] =
