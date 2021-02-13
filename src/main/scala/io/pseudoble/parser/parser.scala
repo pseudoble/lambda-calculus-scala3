@@ -1,6 +1,6 @@
 package io.pseudoble.parser
 
-import io.pseudoble.effects._
+import io.pseudoble.effects.typeclasses._
 import io.pseudoble.tools._
 
 import scala.annotation.tailrec

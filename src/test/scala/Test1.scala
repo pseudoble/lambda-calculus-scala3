@@ -1,5 +1,5 @@
 
-import io.pseudoble.effects._
+import io.pseudoble.effects.typeclasses._
 import io.pseudoble.parser._
 import io.pseudoble.parser.BasicParsers._
 import io.pseudoble.lambda._
