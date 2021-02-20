@@ -1,194 +1,255 @@
 package io.pseudoble.lambda
 
-import io.pseudoble.effects._
-import io.pseudoble.parser._
-import io.pseudoble.parser.BasicParsers._
+import io.pseudoble.effects.instances.State
+
+import scala.util.chaining.scalaUtilChainingOps
+import scala.util.matching.Regex
+import io.pseudoble.lambda.types._
 import io.pseudoble.tools._
 
-import scala.Function.untupled
-import scala.annotation.tailrec
-import scala.util.chaining.scalaUtilChainingOps
+import EnvStack._
 
-/** Lambda Calculus AST Expression types */
-enum LcExpr:
-  /** A Variable Expression */
-  case LcVar(name: String)
-  /** A Function Expression */
-  case LcFunc(param: LcVar, expression: LcExpr)
-  /** An Application Expression */
-  case LcApp(left: LcExpr, right: LcExpr)
+case class EnvStackFrame(binding: Expr.Binding, vars: Set[VarTerm])
+case class EnvStack(frames: List[EnvStackFrame])
 
-import LcExpr._
+object EnvStack {
+  import Expr._
+  type VarTerm = FreeVar | BindingRef
 
-/** Parses any single character that isn't in the set [λ. \t()] as variable. */
-val validVars = raw"^([^λ. \t()])(.*)".r
-def varP: Parser[LcVar] = Parser { 
-  case validVars(h,t) => 
-    val name = h.toString
-    val param: LcVar = LcVar(name)
-    Some((t, param))
-  case nomatch => None
-} 
+  def addFrame(stack: EnvStack)(binding: Binding): EnvStack =
+    EnvStack(EnvStackFrame(binding, Set()) +: stack.frames)
 
-/** Parses an expression between parens. */
-def parensP: Parser[LcExpr] = 
-  charP('(') `:*>` exprP <*: charP(')')
-
-/** Parses a series of Appliation expressions, accounting for parens.  */
-def appP: Parser[LcApp] = for {
-  // first operand must be a var or in parens to disambiguate
-  fst <- (parensP <|> varP): Parser[LcExpr]
-  
-  // second operand can be anything, but funcs should be in parens to disambiguate
-  rest <- atLeast(1)(parensP <|> appP <|> varP): Parser[Vector[LcExpr]]
-  
-  // build the nested sequence of applications (abc => LcApp(LcApp(a,b),c))
-  appExpr = {
-    val first: LcApp = LcApp(fst, rest.head) // the first two operands are required
-    rest.tail match { 
-      case IndexedSeq() => first // if there are only two, we are done
-      case items => items.foldLeft(first)(LcApp(_,_)) // if there are more operands, fold over them to nest
+  def dropFrame(stack: EnvStack): (Set[VarTerm], EnvStack) = {
+    val (fst +: rem) = stack.frames
+    // get the FreeVars to merge down
+    val freeVars: Set[VarTerm] = fst.vars.flatMap {
+      // current function's bindings don't merge down
+      case BindingRef(0) => Set()
+      // BindingRefs with idx > 0, though, do.
+      // Merging down requires their indexes be decremented
+      case BindingRef(n) => Set { BindingRef(n - 1) }
+      // FreeVars are always free in this setup
+      case other => Set { other }
     }
-  }
-} yield appExpr
+    val newStack = rem match {
+      case snd +: t =>
+        // and merge them down to the new stack head
+        val newHead = EnvStackFrame (snd.binding, snd.vars ++ freeVars)
+        EnvStack(newHead +: t)
+      case _ => EnvStack(Nil)
+    }
 
-/** Parses a curried function expression (ie λxyz.xzy) */
-def funcP: Parser[LcFunc] = { 
-  for {
-    // first variable must be preceeded by a lambda.  Additional variables may follow as syntactic sugar over nested single-argument (curried) functions
-    vars <- charP('λ') :*> atLeast(1)(varP)
-    // After the vars, the body follows (separated by a period). It may be anything.
-    body <- charP('.') :*> exprP
-    funcExpr = {
-      val coreFunc: LcFunc = LcFunc(vars.last, body) // We must have at least one function. This will be the inner-most function (last var)
-      vars.dropRight(1) match {
-        case IndexedSeq() => coreFunc // if there was only one var, we're done
-        case items => items.foldRight(coreFunc)(LcFunc(_, _)) // if there are more vars, foldRight on them to create the nested data structure
+    (freeVars, newStack)
+  }
+
+  def addVar(stack: EnvStack)(v: VarTerm): EnvStack = stack.frames match {
+    case h +: t => EnvStack(EnvStackFrame(h.binding, h.vars + v)  +: t)
+    case other => throw Exception("bad juju 1!")
+  }
+
+  def mergeStacks(left: EnvStack, right: EnvStack): EnvStack = (left.frames, right.frames) match {
+    case (lh +: lt, rh +: rt) if lt == rt => EnvStack(mergeFrames(lh, rh) +: lt)
+    case other => throw Exception("bad juju 2!")
+  }
+
+  def mergeFrames(left: EnvStackFrame, right: EnvStackFrame): EnvStackFrame = (left, right) match {
+    case (EnvStackFrame(lb, lv), EnvStackFrame(rb, rv)) if lb == rb => EnvStackFrame(lb, lv ++ rv)
+    case other => throw Exception("bad juju 3!")
+  }
+}
+
+def betaReduce(expr: Expr): Expr = {
+  import Expr._
+
+  def renameBinding(func: Func, stack: EnvStack): Func = {
+    val takenNames = Set.from(stack.frames.map(_.binding.name))
+    def tickName(name: String): String = {
+      val candidate = name + "'"
+      if !takenNames.contains(candidate)
+      then candidate
+      else tickName(candidate)
+    }
+    Func(Binding(tickName(func.binding.name)): Binding, func.expression)  
+  }
+  
+  def hasBindingConflict(func: Func, bodyFreeVars: Set[VarTerm], stack: EnvStack): Boolean = bodyFreeVars.exists {
+    case FreeVar(name) if name == func.binding.name => true
+    case BindingRef(n) => stack.frames.length > n && stack.frames(n).binding.name == func.binding.name
+    case _ => false
+  }
+  
+  // if this function's binding name exists in the free variables of its children,
+  // either as an unbound FreeVar or as a BindingRef to a binding outside this function,
+  // then we need to rename this function's binding.
+  def alphaConvert(func: Func, bodyFreeVars: Set[VarTerm], stack: EnvStack): Func =     
+    if hasBindingConflict(func, bodyFreeVars, stack) 
+    then renameBinding(func, stack)
+    else func
+  
+  
+  def _reduce(current: Expr, stack: EnvStack): (EnvStack, Expr) = current match {
+    case Func(a @ Binding(bindingName), b) =>
+      val (myStack, newBody) = _reduce(b, EnvStack.addFrame(stack)(a))
+      val (freeVars, outStack) = EnvStack.dropFrame(myStack)
+      (outStack, alphaConvert(Func(a, newBody), freeVars, outStack))
+    case App(a, b) => 
+      val (leftStack, left) = _reduce(a, stack)
+      val (rightStack, right) = _reduce(b, stack)
+      (left, right) match {
+        case (Func(arg, body), appRight) =>
+          substitute(0, body, appRight) |> { _reduce(_, stack) }
+        case (l, r) =>
+          EnvStack.mergeStacks(leftStack, rightStack) |> { (_, App(l, r)) }
       }
-    }
-  } yield funcExpr 
-}
-
-/** Parses anything */
-def exprP: Parser[LcExpr] = appP <|> parensP <|> funcP <|> varP
-
-
-//var i: Long = 0
-
-///** Walk the tree and assign a fingerprint to every unique variable declaration and all the places it's used. 
-// *  Variables found without a declaration in scope get no fingerprint. */
-//def fingerprint(expression: LcExpr): LcExpr = {
-//  type ScopeMap = Map[String, LcVar]
-//  type ResolveState[A] = State[ScopeMap, A]
-//
-//  def makeFingerprint(param: LcVar): LcVar = {
-//    i+=1
-//    LcVar(param.name, Some(i))
-//  }
-//
-//  def handleFunc(f: LcFunc): ResolveState[LcExpr] = State { env =>
-//    val param = makeFingerprint(f.param)
-//    val scopedEnv = env + (f.param.name -> param)
-//    val resolvedBody = _fp(f.expression).runV(scopedEnv)
-//    val func = LcFunc(param, resolvedBody)
-//    (env, func)
-//  }  
-//  
-//  def handleVar(v: LcVar): ResolveState[LcExpr] = State { env => 
-//    (env, env.getOrElse(v.name, v))
-//  }
-//  
-//  def handleApp(a: LcApp): ResolveState[LcExpr] = for {
-//    l <- _fp(a.left)
-//    r <- _fp(a.right)
-//  } yield LcApp(l, r) 
-//  
-//  def _fp(expr: LcExpr): ResolveState[LcExpr] = expr match {
-//    case v: LcVar => handleVar(v)
-//    case a: LcApp => handleApp(a)
-//    case f: LcFunc => handleFunc(f)
-//  }
-//  
-//  _fp(expression).runV(Map())
-//}
-
-//val VARNAMES = ('a' to 'z').toSet
-
-
-
-def replace(v: LcVar, valueFac: () => LcExpr)(target: LcExpr): LcExpr = {
-  val _replaceIn = replace(v, valueFac) _
-  target match {
-    case `v` => valueFac()
-    case LcApp(l,r) => LcApp(_replaceIn(l),_replaceIn(r))
-    case LcFunc(arg, body) => LcFunc(arg, _replaceIn(body))
-    case other => other
+      
+    case b@BindingRef(n) =>
+      val outStack = EnvStack.addVar(stack)(b)
+      (outStack, b)
+    case v@FreeVar(name) =>
+      val outStack = EnvStack.addVar(stack)(v)
+      (outStack, v)
+    case o =>
+      (stack, o)
   }
-}
-
-def betaReduce(expr: LcExpr): LcExpr = expr match {
-  case f@LcFunc(param, body) =>
-    LcFunc(param, betaReduce(body))
-  case LcApp(replaceIn, replaceWith) => {
-    val inReduced = betaReduce(replaceIn)
-    val withReduced = betaReduce(replaceWith)
-    inReduced match {
-      case f@LcFunc(param, body) =>
-        val replaced = replace(param, () => withReduced)(body)
-        betaReduce(replaced)
-      case in => LcApp(in, withReduced)
-    }
-  }
-  case o => o
-}
-
-def referenced(param: LcVar)(expr: LcExpr): Boolean = expr match {
-  case `param` => true
-  case LcFunc(_, body) => referenced(param)(body)
-  case LcApp(left, right) => referenced(param)(left) || referenced(param)(right)
-  case _ => false
-}
-def etaConvertReduce(expr: LcExpr): LcExpr = expr match {
-  case func@LcFunc(param, body) =>
-    etaConvertReduce(body) match {
-      case LcApp(left, `param`) =>
-        if referenced(param)(left)
-        then func // func cannot be simplified
-        else left // func can be simplified to just left
-      case _ => func  // func cannot be simplified
-    }
-  case o => o // o cannot be simplified
-}
-
-
-/** Walk the tree and build a string representation of it. This will output syntactic sugar for curried functions
- * and apply parens appropriately! */
-def asStr(expr: LcExpr): String = {
-  def parens(s: String): String = s"($s)"
   
+  _reduce(expr, EnvStack(List(EnvStackFrame(Binding("external"), Set()))))._2
+}
+
+def etaReduce(expr: Expr): Expr = {
+  import Expr._
+
   expr match {
-    case LcVar(name) => name
-    case LcFunc(lcVar, body) =>
-      val v = asStr(lcVar)
-      val b = asStr(body)
+    case Func(_, App(f: Func, BindingRef(0))) => mapFreeRefs(f)(_ - 1)
+    case Func(a, b) => Func(a, etaReduce(b))
+    case App(l, r) => App(etaReduce(l), etaReduce(r))
+    case o => o
+  }
+}
+
+
+// e1 [x := e2]
+// replace every occurance of x in e1 with e2
+def substitute(xIdx: Int, e1: Expr, e2: Expr): Expr = {
+  import Expr._
+
+  def _sub(currE1: Expr, xDelta: Int): Expr = currE1 match {
+    case Func(a, b) => Func(a, _sub(b, xDelta + 1))
+    case App(left, right) => App(_sub(left, xDelta), _sub(right, xDelta))
+    case BindingRef(`xDelta`) => mapFreeRefs(e2)(_ + xDelta)
+    case BindingRef(idx) if idx > xDelta => BindingRef(idx - 1)
+    case b: BindingRef => b
+    case o => o
+  }
+  _sub(e1, xIdx)
+}
+
+def mapFreeRefs(expr: Expr)(f: Int => Int): Expr = {
+  import Expr._
+
+  def _map(current: Expr, depth: Int): Expr = current match {
+    case Func(a, b) => Func(a, _map(b, depth + 1))
+    case App(left, right) => App(_map(left, depth), _map(right, depth))
+    case BindingRef(idx) if idx >= depth => BindingRef(f(idx))
+    case o => o
+  }
+  _map(expr, 0)
+}
+
+///** Walk the tree and build a string representation of it. This will output syntactic sugar for curried functions
+// * and apply parens appropriately! */
+def asStr(expr: Expr | LcParser.ParsedExpr): String = {
+  def parens(s: String): String = s"($s)"
+  val funcRx = "^λ([^.]+)\\.(.*)$".r
+  expr match {
+    case Expr.Func(arg, body) =>
+      val argStr = asStr(arg)
+      val bodyStr = asStr(body)
       body match {
-        case _: LcFunc =>
-          val b2 = b.slice(1, b.length)
-          s"λ$v$b2"
-        case _ => s"λ$v.$b"
+        case b: Expr.App => parens { s"λ$argStr.$bodyStr" }
+        case b: Expr.Func =>
+          bodyStr match {
+            case funcRx(ia, ib) => s"λ$argStr $ia.$ib"
+            case other => s"λ$argStr.$other"
+          }
+        case b => s"λ$argStr.$bodyStr"
+      }
+    case LcParser.ParsedExpr.Func(arg, body) =>
+      val argStr = asStr(arg)
+      val bodyStr = asStr(body)
+      body match {
+        case b: LcParser.ParsedExpr.App => parens { s"λ$argStr.$bodyStr" }
+        case b: LcParser.ParsedExpr.Func =>
+          bodyStr match {
+            case funcRx(ia, ib) => s"λ$argStr $ia.$ib"
+            case other => s"λ$argStr.$other"
+          }
+        case b => s"λ$argStr.$bodyStr"
       }
 
-    case LcApp(left, right) =>
+    case Expr.App(left, right) =>
       val l = left match {
-        case e: LcFunc => parens(asStr(e))
+        case e: Expr.Func => parens(asStr(e))
         case e => asStr(e)
       }
       val r = right match {
-        case e: (LcApp | LcFunc) => parens(asStr(e))
+        case e: (Expr.App | Expr.Func) => parens(asStr(e))
         case e => asStr(e)
       }
-      l + r
+      s"$l $r"
+    case LcParser.ParsedExpr.App(left, right) =>
+      val l = left match {
+        case e: LcParser.ParsedExpr.Func => parens(asStr(e))
+        case e => asStr(e)
+      }
+      val r = right match {
+        case e: (Expr.App | Expr.Func) => parens(asStr(e))
+        case e => asStr(e)
+      }
+      s"$l $r"
+      
+    case Expr.Literal(value) => value.toString
+    case LcParser.ParsedExpr.Literal(value) => value.toString
+
+    case Expr.Binding(name) => name
+    case LcParser.ParsedExpr.Var(name) => name
+      
+    case Expr.BindingRef(idx) => s"<$idx>"
+      
+    case Expr.FreeVar(name) => s"$name"
   }
 }
 
-def printPretty = asStr andThen println
+def toIdx(expr: LcParser.ParsedExpr): Expr = {
+  def _toIdx(current: LcParser.ParsedExpr, indices: List[String]): Expr = current match {
+    case LcParser.ParsedExpr.Func(LcParser.ParsedExpr.Var(name), b) => Expr.Func(Expr.Binding(name), _toIdx(b, name +: indices))
+    case LcParser.ParsedExpr.App(a, b) => Expr.App(_toIdx(a, indices), _toIdx(b, indices))
+    case LcParser.ParsedExpr.Var(name) => indices.indexOf(name) match {
+      case -1 => Expr.FreeVar(name)
+      case n => Expr.BindingRef(n)
+    }
+    case LcParser.ParsedExpr.Literal(value) => Expr.Literal(value)
+  }
+  _toIdx(expr, List())
+}
+
+def fromIdx(expr: Expr): LcParser.ParsedExpr = {
+  import LcParser.{ ParsedExpr => PExpr }
+  
+  def _fromIdx(current: Expr, indices: List[String]): PExpr = 
+    current match {
+      case Expr.Func(a @ Expr.Binding(name), b) => PExpr.Func(
+        { 
+          val x: PExpr = _fromIdx(a, indices)
+          x.asInstanceOf[PExpr.Var]
+        },
+        _fromIdx(b, name +: indices))
+      case Expr.App(a, b) => 
+        PExpr.App(_fromIdx(a, indices), _fromIdx(b, indices))
+      case b@Expr.BindingRef(n) =>
+        PExpr.Var(indices(n))
+      case v@Expr.FreeVar(name) => PExpr.Var(name)
+      case Expr.Literal(value) => PExpr.Literal(value)
+      case Expr.Binding(name) => PExpr.Var(name)
+    }
+  _fromIdx(expr, List())    
+}

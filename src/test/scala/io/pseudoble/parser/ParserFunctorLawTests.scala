@@ -4,7 +4,7 @@ import io.pseudoble.effects.typeclasses._
 import io.pseudoble.parser._
 import io.pseudoble.parser.BasicParsers._
 import io.pseudoble.lambda._
-import io.pseudoble.lambda.LcExpr._
+//import io.pseudoble.lambda.LcExpr._
 import io.pseudoble.tools._
 import org.scalatestplus.scalacheck.Checkers
 import org.scalacheck.{Arbitrary, Gen, Prop, Properties}
