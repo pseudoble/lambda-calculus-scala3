@@ -207,7 +207,6 @@ def asStr(expr: Expr | LcParser.ParsedExpr): String = {
       }
       s"$l $r"
       
-    case Expr.Literal(value) => value.toString
     case LcParser.ParsedExpr.Literal(value) => value.toString
 
     case Expr.Binding(name) => name
@@ -227,7 +226,6 @@ def toIdx(expr: LcParser.ParsedExpr): Expr = {
       case -1 => Expr.FreeVar(name)
       case n => Expr.BindingRef(n)
     }
-    case LcParser.ParsedExpr.Literal(value) => Expr.Literal(value)
   }
   _toIdx(expr, List())
 }
@@ -248,7 +246,6 @@ def fromIdx(expr: Expr): LcParser.ParsedExpr = {
       case b@Expr.BindingRef(n) =>
         PExpr.Var(indices(n))
       case v@Expr.FreeVar(name) => PExpr.Var(name)
-      case Expr.Literal(value) => PExpr.Literal(value)
       case Expr.Binding(name) => PExpr.Var(name)
     }
   _fromIdx(expr, List())    

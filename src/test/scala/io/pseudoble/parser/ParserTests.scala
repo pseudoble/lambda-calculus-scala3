@@ -2,6 +2,7 @@ package io.pseudoble.parser
 
 import scala.util.chaining.scalaUtilChainingOps
 import io.pseudoble.effects.typeclasses._
+import io.pseudoble.effects.typeclasses.Extensions._
 import io.pseudoble.parser._
 import io.pseudoble.parser.BasicParsers._
 import io.pseudoble.lambda._
@@ -12,9 +13,6 @@ import org.scalacheck.Prop.forAll
 import org.scalatest._
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers._
-//import org.scalatest.EitherValues._
-//import org.scalatest.OptionValues._
-//import org.scalatest.Inside._
 import org.scalatest.matchers.dsl
 
 trait LcShorthand {
@@ -32,10 +30,12 @@ class BasicParserTests extends AnyFlatSpec with OptionValues {
     val result = charP('c').parse("charles")
     result.value should be (("harles", 'c'))
   }
+  
   "charP" should "return None when expected char was not at head of stream" in {
     val result = charP('x').parse("charles")
     result shouldBe empty
   }
+  
   "charP" should "work with lambda symbol" in {
     val result = charP('λ').parse("λx.x")
     result.value should be(("x.x", 'λ'))
@@ -45,6 +45,7 @@ class BasicParserTests extends AnyFlatSpec with OptionValues {
     val result = stringP("char").parse("charles")
     result.value should be(("les", "char"))
   }
+  
   "stringP" should "return None when expected string was not at head of stream" in {
     val result = stringP("char").parse("changed")
     result shouldBe empty
@@ -54,6 +55,7 @@ class BasicParserTests extends AnyFlatSpec with OptionValues {
     val result = many(charP('a')).parse("aardvark")
     result.value should be(("rdvark", List('a', 'a')))
   }
+  
   "manyP" should "return Some with entire stream and an empty list when inner parser never matches" in {
     val result = many(charP('a')).parse("bovine")
     result.value should be(("bovine", List()))
@@ -63,6 +65,7 @@ class BasicParserTests extends AnyFlatSpec with OptionValues {
     val result = BasicParsers.atLeast(2)(charP('a')).parse("aardvark")
     result.value should be(("rdvark", List('a', 'a')))
   }
+  
   "atLeast" should "return None when minimum count is not reached" in {
     val result = BasicParsers.atLeast(3)(charP('a')).parse("aardvark")
     result shouldBe empty
@@ -96,26 +99,6 @@ class LambdaParserTests extends AnyFlatSpec with EitherValues with LcShorthand {
     result.value should be (FreeVar("xyz"))
   }
 
-  "false" should "parse as a literal boolean false" in {
-    val result = LcParser.parse("false")
-    result.value should be (Literal(false))
-  }
-
-  "true" should "parse as a literal boolean true" in {
-    val result = LcParser.parse("true")
-    result.value should be (Literal(true))
-  }
-
-  "an integer string" should "parse as a literal integer value" in {
-    val result = LcParser.parse("11235")
-    result.value should be (Literal(11235))
-  }
-
-  "an decimal string" should "parse as a literal decimal value" in {
-    val result = LcParser.parse("11235.813")
-    result.value should be (Literal(11235.813))
-  }
-
   "identity func" should "parse as indexed identity func" in {
     val result = LcParser.parse("\\x.x")
     result.value should be (Func(Binding("x"), BindingRef(0)))
@@ -125,18 +108,17 @@ class LambdaParserTests extends AnyFlatSpec with EitherValues with LcShorthand {
     val result = LcParser.parse("\\x.y")
     result.value should be (Func(Binding("x"), FreeVar("y")))
   }
+  
   "nested func with var body of second param" should "parse as func with BindingRef(0)" in {
     val result = LcParser.parse("\\x.\\y.y")
     result.value should be (Func(Binding("x"), Func(Binding("y"), BindingRef(0))))
   }
+  
   "nested func with var body of first param" should "parse as func with BindingRef(1)" in {
     val result = LcParser.parse("\\x.\\y.x")
     result.value should be (Func(Binding("x"), Func(Binding("y"), BindingRef(1))))
   }
-  "apply with two boolean constants" should "parse as apply with correctly valued Literals" in {
-    val result = LcParser.parse("true false")
-    result.value should be (App(Literal(true), Literal(false)))
-  }
+  
   "apply with two free variables" should "parse as apply with FreeVars" in {
     val result = LcParser.parse("left right")
     result.value should be (App(FreeVar("left"), FreeVar("right")))

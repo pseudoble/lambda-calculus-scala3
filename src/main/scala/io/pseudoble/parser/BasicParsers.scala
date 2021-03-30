@@ -2,9 +2,11 @@ package io.pseudoble.parser
 
 import scala.annotation.tailrec
 import scala.util.matching.Regex
+import scala.util.chaining.scalaUtilChainingOps
 
 import io.pseudoble.tools._
 import io.pseudoble.effects.typeclasses._
+import io.pseudoble.effects.typeclasses.Extensions._
 
 object BasicParsers {
   private def pure[A](a: A)(using app: Applicative[Parser]): Parser[A] = app.pure(a)
@@ -16,9 +18,11 @@ object BasicParsers {
   def constP[A](a: A): Parser[A] = pure(a)
 
   /** Parses the configured character 'x'. */
-  def charP(x: Char): Parser[Char] = Parser { 
-    case y scons ys if y == x => Some((ys, x))
-    case nomatch => None
+  def charP(x: Char): Parser[Char] = Parser { stream =>
+    if (stream.isEmpty == false && stream(0) == x)
+      Some((stream.substring(1), x))
+    else 
+      None
   }
 
   /** Parses the configured string 'x'. */
@@ -32,6 +36,8 @@ object BasicParsers {
       case s => Some((stream.substring(s.length), s))
     }
   }
+  
+  def parsePositiveInt: Parser[Int] = spanP(c => c.isDigit).map(_.toInt)
   
   /** Parses a sequence of characters as whitespace. */
   def wsP: Parser[String] = spanP(_.isWhitespace)

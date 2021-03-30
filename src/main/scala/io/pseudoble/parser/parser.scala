@@ -1,6 +1,7 @@
 package io.pseudoble.parser
 
 import io.pseudoble.effects.typeclasses._
+import io.pseudoble.effects.typeclasses.Extensions._
 import io.pseudoble.tools._
 
 import scala.annotation.tailrec
@@ -15,24 +16,44 @@ type ParserFunc[A] = String => Option[ParserResult[A]]
 
 /** Class definition of a Parser[A] */
 case class Parser[+A](parse: ParserFunc[A])
-
-object Parser:
-  /** Monad & Alternative implementations for Parser */
+object Parser {
   given Monad[Parser] with Alternative[Parser] with {
-    def empty[A]: Parser[A] = Parser { _ => None }
-    def pure[A](a: => A): Parser[A] = Parser { Some(_, a) }
-    extension [A](fa: Parser[A])
-      def orElse(other: => Parser[A]): Parser[A] =
-        Parser { input =>
-          fa.parse(input).orElse(other.parse(input))
+    // Members declared in io.pseudoble.effects.typeclasses.Alternative
+    def alt[A](left: Parser[A])(right: Parser[A]): Parser[A] = 
+      Parser { input =>
+        left.parse(input).orElse(right.parse(input))
+      }
+
+    def empty[A]: Parser[A] = 
+      Parser { _ => None }
+
+    // Members declared in io.pseudoble.effects.typeclasses.Applicative
+    def pure[A](a: A): Parser[A] = 
+      Parser { Some(_, a) }
+
+    // Members declared in io.pseudoble.effects.typeclasses.Monad
+    def flatMap[A, B](fa: Parser[A])(f: A => Parser[B]): Parser[B] = 
+      Parser { input =>
+        fa.parse(input) match {
+          case Some((i, a)) => f(a).parse(i)
+          case None => None
         }
-    extension [A, B](fa: Parser[A])
-      def flatMap(f: => A => Parser[B]): Parser[B] =
-        Parser { input =>
-          fa.parse(input) match {
-            case Some((i, a)) => f(a).parse(i)
-            case None => None
-          }
-        }
+      }
   }
 
+  extension [A] (as: List[Parser[A]]) // List[F[_]] => F[List[_]]
+    /** sequence - invert a list of containers with individual values into a single container with a list of values. */
+    def sequence: Parser[List[A]] = as.traverse(identity)
+  
+  extension [A](as: List[A])
+    /** traverse - apply the function returning a container to each element in the list
+     *             and return a new container with the list of results inside. */
+    def traverse[B](f: => A => Parser[B])(using applicative: Applicative[Parser]): Parser[List[B]] =
+      as.foldLeft(applicative.pure(Vector.empty[B])) { 
+        (acc: Parser[Vector[B]], a: A) =>
+          acc map { 
+            (bs: Vector[B]) => (b: B) => bs :+ b            
+          } pipe (_ <*> f(a))
+      }.map(_.toList)
+
+}

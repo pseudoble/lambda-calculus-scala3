@@ -1,6 +1,7 @@
 package io.pseudoble.parser
 
 import io.pseudoble.effects.typeclasses._
+import io.pseudoble.effects.typeclasses.Extensions._
 import io.pseudoble.parser._
 import io.pseudoble.parser.BasicParsers._
 import io.pseudoble.lambda._
@@ -43,7 +44,7 @@ class ParserApplicativeLawTests extends AnyFlatSpec with Checkers {
   "ap" should "work as expected" in {
     check(forAll(arbitraryStream, parserF, parserInt) { 
       case (stream, (f, pf), (i, pi)) =>
-        checkValue((pi ap pf).parse(stream), _ == f(i))
+        checkValue((pf <*> pi).parse(stream), _ == f(i))
     })
   }
 

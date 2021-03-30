@@ -1,6 +1,7 @@
 package io.pseudoble.parser
 
 import io.pseudoble.effects.typeclasses._
+import io.pseudoble.effects.typeclasses.Extensions._
 import io.pseudoble.parser._
 import io.pseudoble.parser.BasicParsers._
 import io.pseudoble.lambda._
